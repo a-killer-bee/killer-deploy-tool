@@ -1,0 +1,225 @@
+#!/bin/bash
+#
+# Deploy    Software Deploy Tool
+#
+# Date:        2016/04/11
+# Description: Need to install "pssh", "subversion"
+#                   to make    "nodelist" in pssh progaram directory
+#                              "exclude files"
+#                              "deploy target file" or overwrite
+#                              "directry(deploy_from, deploy_to, working_copy)"
+#
+
+###
+## Check Overlapping Run
+#
+if [ $$ != `pgrep -fo $0`  ]; then
+    #echo "[`date '+%Y/%m/%d %T'`] myself is already running. exit myself."
+    echo "Error: myself is already running. exit myself."
+    exit 1
+fi
+
+###
+## Program Config
+# 
+
+# General User
+# not execute user
+DEPLOY_SOURCE_OWNER=test
+
+# Program Root Directory
+PROGRAM_ROOT_DIR="/usr/local/deploy"
+
+# Pssh Program Directory
+PSSH_PROGRAM_DIR="/usr/local/pssh"
+
+###
+## File path, name Config
+#
+
+# Deploy Logs
+EXEC_LOG_PATH="${PROGRAM_ROOT_DIR}/logs"
+EXEC_LOG="deploy.log"
+MONTH=`date +%Y%m`
+
+# Exclude
+PROGRAM_CONF_FILE_DIR="${PROGRAM_ROOT_DIR}/conf"
+EXCLUDE_FILE_DIR=${PROGRAM_CONF_FILE_DIR}
+
+# Deploy Target List Path
+DEPLOY_TARGET_LIST_PATH="${PROGRAM_CONF_FILE_DIR}/deploy_target"
+
+# Node list
+NODELIST_PATH="${PSSH_PROGRAM_DIR}/nodelist"
+
+# Deploy Directory
+DEPLOY_FROM="/home/test/deploy/apps"
+DEPLOY_TO="/var/www"
+
+# Working Copy Directory
+WORKING_COPY_DIR="/home/test/svn/apps"
+
+###
+## Other Parameter Config 
+#
+
+# Error Check
+STATUS_OK=1
+STATUS_NG=2
+DEPLOY_STATUS=${STATUS_OK}
+PARAM_STATUS=${STATUS_NG}
+
+# Retention
+# Default: can go back 2 generation
+RETENTION=3
+
+# Exec Type
+EXEC="Deploy"
+
+# Time
+DEPLOYTIME=`date +%Y%m%d%H%M%S`
+
+###
+## Function
+#
+
+#
+#  Deploy
+#
+#  WORKING_COPY_DIR              : $1
+#  PC_DIR_NAME                   : $2
+#  NODELIST_PATH + WEB_NODE_LIST : $3
+#  DEPLOY_FROM                   : $4
+#  DEPLOY_TO                     : $5
+#  EXCLUDE_FILE_PATH             : $6
+deploy () {
+    # retention
+      GENERATION=$(($RETENTION + 1))
+
+    # deploy
+      cd $1/$2 \
+      && sudo -u ${DEPLOY_SOURCE_OWNER} svn up \
+      && cp -rp $1/$2 $4/$2.${DEPLOYTIME} \
+      && rm -f $4/$2_current \
+      && sudo -u ${DEPLOY_SOURCE_OWNER} ln -s $4/$2.${DEPLOYTIME} $4/$2_current \
+      && prsync -x --delete -x --exclude-from=$6 -h $3 -az $4/$2_current/ $5/ \
+      && find $4/ -maxdepth 1 -name "$2.*" | sort -nrk8 | tail -n +${GENERATION} | xargs rm -rf \
+      || DEPLOY_STATUS=${STATUS_NG}
+}
+
+#
+#  Rollback
+#
+#  WORKING_COPY_DIR              : $1
+#  PC_DIR_NAME                   : $2
+#  NODELIST_PATH + WEB_NODE_LIST : $3
+#  DEPLOY_FROM                   : $4
+#  DEPLOY_TO                     : $5
+#  EXCLUDE_FILE_PATH             : $6
+rollback () {
+    # rollback
+      CURRENT_SYMLINK_ENTITY_PATH=`readlink -f $4/$2_current`
+      if [ -e "$CURRENT_SYMLINK_ENTITY_PATH" ]; then
+        ENTITY_COUNT=`find $4/ -name "$2.*" | wc -l`
+        if [ $ENTITY_COUNT -gt 1 ]; then
+          ROLLBACK_ENTITY_PATH=`find $4/ -maxdepth 1 -name "$2.*" | sort -nrk8 | head -n 2 | tail -n 1`
+          rm -f $4/$2_current && rm -rf ${CURRENT_SYMLINK_ENTITY_PATH} \
+          && sudo -u ${DEPLOY_SOURCE_OWNER} ln -s ${ROLLBACK_ENTITY_PATH} $4/$2_current \
+          && prsync -x --delete -x --exclude-from=$6 -h $3 -az $4/$2_current/ $5/ \
+          && EXEC="Rollback" \
+          || DEPLOY_STATUS=${STATUS_NG}
+        else
+          echo "Error: Not found rollback entity..."
+          DEPLOY_STATUS=${STATUS_NG}
+        fi
+      else
+        echo "Error: Not found current entity..."
+        DEPLOY_STATUS=${STATUS_NG}
+      fi
+}
+
+###
+## Deploy Process
+#
+
+if [ -n "$1" ]; then
+  while read line
+  do
+    TARGET=($line)
+    if [ "$1" = "${TARGET[1]}" ]; then
+      # Check exist of deploy target file
+      if [ ! -e "$DEPLOY_TARGET_LIST_PATH" ]; then
+        echo "Error: Not found deploy target list..."
+        exit 1
+      fi
+      # Check exist of target nodes list
+      if [ ! -e "${NODELIST_PATH}/${TARGET[0]}" ]; then
+        echo "Error: Not found target nodes list..."
+        exit 1
+      fi
+      # Check exist of exclude file
+      if [ ! -e "${EXCLUDE_FILE_DIR}/${TARGET[0]}_ignore" ]; then
+        echo "Error: Not found deploy exclude file..."
+        exit 1
+      fi
+
+      # Make Path
+      WORKING_COPY_PARENT_DIR="${WORKING_COPY_DIR}/${TARGET[0]}"
+      WORKING_COPY_DIR_NAME=$1
+      TARGET_NODELIST_PATH=${NODELIST_PATH}/${TARGET[0]}
+      DEPLOY_FROM_DIR="${DEPLOY_FROM}/${TARGET[0]}"
+      DEPLOY_TO_DIR="${DEPLOY_TO}/${TARGET[1]}"
+      EXCLUDE_FILE_LIST_PATH="${EXCLUDE_FILE_DIR}/${TARGET[0]}_ignore"
+      
+      # Deploy or Rollback
+      case "$2" in
+        ""|normal)
+          deploy ${WORKING_COPY_PARENT_DIR} \
+                 ${WORKING_COPY_DIR_NAME} \
+                 ${TARGET_NODELIST_PATH} \
+                 ${DEPLOY_FROM_DIR} \
+                 ${DEPLOY_TO_DIR} \
+                 ${EXCLUDE_FILE_LIST_PATH}
+          ;;
+        rollback)
+          rollback ${WORKING_COPY_PARENT_DIR} \
+                   ${WORKING_COPY_DIR_NAME} \
+                   ${TARGET_NODELIST_PATH} \
+                   ${DEPLOY_FROM_DIR} \
+                   ${DEPLOY_TO_DIR} \
+                   ${EXCLUDE_FILE_LIST_PATH}
+          ;;
+        *)
+          echo "Error: You can input only option \"normal\" or \"rollback\"..."
+          DEPLOY_STATUS=${STATUS_NG}
+          ;;
+      esac
+
+      # Logging
+      if [ "${DEPLOY_STATUS}" -eq ${STATUS_OK} ]; then
+        echo "Success: $EXEC $1"
+        echo "`date` "$SSH_CLIENT" $EXEC "$1 >> "${EXEC_LOG_PATH}/${EXEC_LOG}.${MONTH}"
+      else
+        echo "Failure: $EXEC $1..."
+        exit 2
+      fi
+
+      # Check Parameter $1
+      PARAM_STATUS=${STATUS_OK}
+
+      # Break
+      break
+    fi
+  done < ${DEPLOY_TARGET_LIST_PATH}
+
+  # Check Parameter $1
+  if [ "${PARAM_STATUS}" -eq ${STATUS_NG} ]; then
+    echo "Error: Parameter is miss match..."
+    exit 1
+  fi
+else
+  echo "Error: Not input parameter..."
+  exit 1
+fi
+
+exit 0

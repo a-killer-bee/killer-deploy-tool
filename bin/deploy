@@ -87,7 +87,7 @@ DEPLOYTIME=`date +%Y%m%d%H%M%S`
 #  Deploy
 #
 #  WORKING_COPY_DIR              : $1
-#  PC_DIR_NAME                   : $2
+#  APP_DIR_NAME                   : $2
 #  NODELIST_PATH + WEB_NODE_LIST : $3
 #  DEPLOY_FROM                   : $4
 #  DEPLOY_TO                     : $5
@@ -111,7 +111,7 @@ deploy () {
 #  Rollback
 #
 #  WORKING_COPY_DIR              : $1
-#  PC_DIR_NAME                   : $2
+#  APP_DIR_NAME                   : $2
 #  NODELIST_PATH + WEB_NODE_LIST : $3
 #  DEPLOY_FROM                   : $4
 #  DEPLOY_TO                     : $5
